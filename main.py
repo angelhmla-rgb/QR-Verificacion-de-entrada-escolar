@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from google.oauth2.service_account import Credentials
 
-# 1. INICIALIZACIÓN DE LA APLICACIÓN (Esto evita el NameError)
+# 1. INICIALIZACIÓN DE LA APLICACIÓN
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
@@ -18,28 +18,30 @@ templates = Jinja2Templates(directory="templates")
 CLAVE_SECRETA = "Prefectura2026"  
 COOKIE_NAME = "sesion_prefecto"
 
-# CONFIGURACIÓN DE LA API DE WHATSAPP
+# CONFIGURACIÓN DE LA API DE WHATSAPP (Contenedor alterno)
 WHATSAPP_API_URL = "http://tu-servicio-whatsapp-interno.railway.internal/send-message"
 WHATSAPP_TOKEN = "UnTokenSeguroCreadoPorTi"
 
 class EntradaQR(BaseModel):
     texto_qr: str
 
-# Conexión con Google Sheets
+# Conexión Segura con Google Sheets (Prioriza la Variable de Entorno)
 def conectar_sheets():
     creds_json = os.environ.get("GOOGLE_CREDS")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
     if creds_json:
+        # Carga las credenciales de forma segura desde las Variables de Railway
         info = json.loads(creds_json)
         creds = Credentials.from_service_account_info(info, scopes=scope)
     else:
-        creds = Credentials.from_service_account_file("credenciales.json", scopes=scope)
+        # Respaldo local solo por si acaso
+        creds = Credentials.from_service_account_file("cecytec-acceso-170202a5fd9f.json", scopes=scope)
         
     client = gspread.authorize(creds)
     return client.open_by_url("https://docs.google.com/spreadsheets/d/193NV0p1OQsZAZy-f-gtOQZE743lh6yC6GgtlYzTHTkY/edit?usp=sharing")
 
-# Función para enviar el WhatsApp
+# Función para enviar las notificaciones a los tutores
 def enviar_mensaje_whatsapp(telefono_tutor, mensaje):
     if not str(telefono_tutor).startswith("52"):
         telefono_tutor = f"52{telefono_tutor}"
@@ -86,7 +88,7 @@ async def home(request: Request):
     <body>
         <div class="card">
             <h2>⚠️ Control de Acceso</h2>
-            <p>Esta página es de uso exclusivo para el personal authorized en la puerta del plantel.</p>
+            <p>Esta página es de uso exclusivo para el personal autorizado en la puerta del plantel.</p>
             <form method="post" action="/login">
                 <input type="password" name="clave" placeholder="Contraseña de Prefectura" required>
                 <button type="submit">Iniciar Escáner</button>
@@ -102,11 +104,11 @@ async def home(request: Request):
 async def login(clave: str = Form(...)):
     if clave == CLAVE_SECRETA:
         response = RedirectResponse(url="/", status_code=303)
-        response.set_cookie(key=COOKIE_NAME, value=CLAVE_SECRETA, max_age=28800) # 8 horas
+        response.set_cookie(key=COOKIE_NAME, value=CLAVE_SECRETA, max_age=28800) # Valid por 8 horas
         return response
     return HTMLResponse(content="<script>alert('Contraseña Incorrecta'); window.location='/';</script>")
 
-# Procesador de códigos QR basado en la KEY extraída de la URL oficial
+# Procesador de códigos QR basado en la KEY de la URL oficial de la credencial
 @app.post("/registrar-asistencia")
 async def registrar_asistencia(data: EntradaQR, request: Request):
     if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
@@ -118,7 +120,7 @@ async def registrar_asistencia(data: EntradaQR, request: Request):
     key_match = re.search(r"[?&]key=([^&]+)", texto)
     
     if not key_match:
-        return {"status": "error", "mensaje": "Código QR no válido. No es una credencial oficial del CECYTEC."}
+        return {"status": "error", "mensaje": "Código QR no válido. No contiene un formato oficial de credencial CECYTEC."}
     
     key_alumno = key_match.group(1).strip()
     
@@ -127,19 +129,19 @@ async def registrar_asistencia(data: EntradaQR, request: Request):
         pestaña_tutores = doc.worksheet("Directorio_Tutores")
         pestaña_asistencia = doc.worksheet("Asistencia_Diaria")
         
-        # Buscamos la fila correspondiente mediante la KEY única
+        # Buscamos la fila correspondiente mediante la KEY única extraída del QR
         celda_alumno = pestaña_tutores.find(key_alumno)
         
         if not celda_alumno:
-            return {"status": "error", "mensaje": "Credencial no registrada o alumno no encontrado en el Directorio."}
+            return {"status": "error", "mensaje": "Credencial escaneada no encontrada en el Directorio de Google Sheets."}
         
         fila_alumno = celda_alumno.row
         datos_alumno = pestaña_tutores.row_values(fila_alumno)
         
-        # Mapeo de columnas (A: Control, B: Nombre, C: Tel, D: Status)
+        # Mapeo de columnas optimizado (A: Control, B: Nombre, C: Tel, D: Status)
         num_control = datos_alumno[0]
         alumno = datos_alumno[1]
-        telefono_tutor = datos_alumno[2]
+        telefono_tutor = datos_alumno[2] if len(datos_alumno) >= 3 else None
         status = datos_alumno[3] if len(datos_alumno) >= 4 else "ACTIVO"
         
         # Filtro de Seguridad Local contra Alumnos Dados de Baja
@@ -169,7 +171,7 @@ async def registrar_asistencia(data: EntradaQR, request: Request):
             "Permitido"
         ])
         
-        if telefono_tutor:
+        if telefono_tutor and str(telefono_tutor).strip():
             saludo = "Buenos días" if "AM" in hora_registro else "Buenas tardes"
             mensaje_wa = f"📝 *CECYTEC Informa:*\n\n{saludo}, le notificamos que el alumno(a) *{alumno}* ha registrado su *{tipo_evento}* del plantel el día de hoy a las {hora_registro}."
             
