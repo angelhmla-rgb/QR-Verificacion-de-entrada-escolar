@@ -176,4 +176,4 @@ async def registrar_asistencia(data: EntradaQR, request: Request):
         except Exception as e:
             return {"status": "error", "mensaje": f"Error al conectar con Google Sheets: {str(e)}"}
         
-    return {"status": "error", "mensaje": "Código QR no válido o datos incompletos."}
+  return {"status": "error", "mensaje": f"Texto detectado en el QR: {texto}"}
