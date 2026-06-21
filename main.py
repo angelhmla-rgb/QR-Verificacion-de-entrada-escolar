@@ -18,24 +18,25 @@ templates = Jinja2Templates(directory="templates")
 CLAVE_SECRETA = "Prefectura2026"  
 COOKIE_NAME = "sesion_prefecto"
 
-# CONFIGURACIÓN DE LA API DE WHATSAPP (Contenedor alterno)
+# CONFIGURACIÓN DE LA API DE WHATSAPP
 WHATSAPP_API_URL = "http://tu-servicio-whatsapp-interno.railway.internal/send-message"
 WHATSAPP_TOKEN = "UnTokenSeguroCreadoPorTi"
 
 class EntradaQR(BaseModel):
     texto_qr: str
 
-# Conexión Segura con Google Sheets (Prioriza la Variable de Entorno)
+# Conexión Segura con Google Sheets
 def conectar_sheets():
     creds_json = os.environ.get("GOOGLE_CREDS")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
     if creds_json:
-        # Carga las credenciales de forma segura desde las Variables de Railway
-        info = json.loads(creds_json)
-        creds = Credentials.from_service_account_info(info, scopes=scope)
+        try:
+            info = json.loads(creds_json)
+            creds = Credentials.from_service_account_info(info, scopes=scope)
+        except Exception as json_err:
+            raise RuntimeError(f"Error al procesar el formato JSON de GOOGLE_CREDS: {str(json_err)}")
     else:
-        # Respaldo local solo por si acaso
         creds = Credentials.from_service_account_file("cecytec-acceso-170202a5fd9f.json", scopes=scope)
         
     client = gspread.authorize(creds)
@@ -104,11 +105,11 @@ async def home(request: Request):
 async def login(clave: str = Form(...)):
     if clave == CLAVE_SECRETA:
         response = RedirectResponse(url="/", status_code=303)
-        response.set_cookie(key=COOKIE_NAME, value=CLAVE_SECRETA, max_age=28800) # Valid por 8 horas
+        response.set_cookie(key=COOKIE_NAME, value=CLAVE_SECRETA, max_age=28800)
         return response
     return HTMLResponse(content="<script>alert('Contraseña Incorrecta'); window.location='/';</script>")
 
-# Procesador de códigos QR basado en la KEY de la URL oficial de la credencial
+# Procesador de códigos QR con Extracción de KEY Automática para Nuevos Alumnos
 @app.post("/registrar-asistencia")
 async def registrar_asistencia(data: EntradaQR, request: Request):
     if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
@@ -129,22 +130,23 @@ async def registrar_asistencia(data: EntradaQR, request: Request):
         pestaña_tutores = doc.worksheet("Directorio_Tutores")
         pestaña_asistencia = doc.worksheet("Asistencia_Diaria")
         
-        # Buscamos la fila correspondiente mediante la KEY única extraída del QR
         celda_alumno = pestaña_tutores.find(key_alumno)
         
+        # MODIFICACIÓN CLAVE: Si la credencial NO existe, te muestra la Key limpia lista para copiar
         if not celda_alumno:
-            return {"status": "error", "mensaje": "Credencial escaneada no encontrada en el Directorio de Google Sheets."}
+            return {
+                "status": "error", 
+                "mensaje": f"Nueva credencial detectada. Copia esta clave para tu Google Sheets:\n\n🔑 {key_alumno}"
+            }
         
         fila_alumno = celda_alumno.row
         datos_alumno = pestaña_tutores.row_values(fila_alumno)
         
-        # Mapeo de columnas optimizado (A: Control, B: Nombre, C: Tel, D: Status)
         num_control = datos_alumno[0]
         alumno = datos_alumno[1]
         telefono_tutor = datos_alumno[2] if len(datos_alumno) >= 3 else None
         status = datos_alumno[3] if len(datos_alumno) >= 4 else "ACTIVO"
         
-        # Filtro de Seguridad Local contra Alumnos Dados de Baja
         if "BAJA" in status.upper() or "NO VIGENTE" in status.upper():
             return {
                 "status": "alerta",
