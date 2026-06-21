@@ -1,111 +1,4 @@
-import re
-import json
-import os
-import gspread
-import requests
-from datetime import datetime
-from fastapi import FastAPI, Request, Form, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
-from google.oauth2.service_account import Credentials
-
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
-
-# CONFIGURACIÓN DE SEGURIDAD
-CLAVE_SECRETA = "Prefectura2026"  
-COOKIE_NAME = "sesion_prefecto"
-
-# CONFIGURACIÓN DE LA API DE WHATSAPP (Contenedor Baileys/WAHA en Railway)
-WHATSAPP_API_URL = "http://tu-servicio-whatsapp-interno.railway.internal/send-message"
-WHATSAPP_TOKEN = "UnTokenSeguroCreadoPorTi"
-
-class EntradaQR(BaseModel):
-    texto_qr: str
-
-# Conexión con Google Sheets
-def conectar_sheets():
-    creds_json = os.environ.get("GOOGLE_CREDS")
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    
-    if creds_json:
-        info = json.loads(creds_json)
-        creds = Credentials.from_service_account_info(info, scopes=scope)
-    else:
-        creds = Credentials.from_service_account_file("credenciales.json", scopes=scope)
-        
-    client = gspread.authorize(creds)
-    return client.open_by_url("https://docs.google.com/spreadsheets/d/193NV0p1OQsZAZy-f-gtOQZE743lh6yC6GgtlYzTHTkY/edit?usp=sharing")
-
-# Función para enviar el WhatsApp por medio del contenedor secundario
-def enviar_mensaje_whatsapp(telefono_tutor, mensaje):
-    if not str(telefono_tutor).startswith("52"):
-        telefono_tutor = f"52{telefono_tutor}"
-        
-    payload = {
-        "chatId": f"{telefono_tutor}@c.us",
-        "text": mensaje
-    }
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    try:
-        response = requests.post(WHATSAPP_API_URL, json=payload, headers=headers, timeout=5)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"❌ Fallo de conexión con WhatsApp: {str(e)}")
-        return False
-
-# 1. Pantalla de inicio de sesión / Filtro de seguridad
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    sesion = request.cookies.get(COOKIE_NAME)
-    if sesion == CLAVE_SECRETA:
-        return templates.TemplateResponse("index.html", {"request": request})
-    
-    html_login = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Acceso Restringido - CECYTEC</title>
-        <style>
-            body { font-family: sans-serif; background: #f4f6f9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-            .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; max-width: 360px; width: 90%; }
-            h2 { color: #2c3e50; margin-bottom: 10px; }
-            p { color: #7f8c8d; font-size: 14px; margin-bottom: 20px; }
-            input[type="password"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-            button { width: 100%; padding: 12px; background: #00875a; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
-            button:hover { background: #006c48; }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h2>⚠️ Control de Acceso</h2>
-            <p>Esta página es de uso exclusivo para el personal autorizado en la puerta del plantel.</p>
-            <form method="post" action="/login">
-                <input type="password" name="clave" placeholder="Contraseña de Prefectura" required>
-                <button type="submit">Iniciar Escáner</button>
-            </form>
-        </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_login)
-
-# 2. Procesar la contraseña ingresada
-@app.post("/login")
-async def login(clave: str = Form(...)):
-    if clave == CLAVE_SECRETA:
-        response = RedirectResponse(url="/", status_code=303)
-        response.set_cookie(key=COOKIE_NAME, value=CLAVE_SECRETA, max_age=28800) # 8 horas
-        return response
-    return HTMLResponse(content="<script>alert('Contraseña Incorrecta'); window.location='/';</script>")
-
-# 3. El procesador de los códigos QR (Aquí es donde va colocada la información que pusiste)
+# 3. El procesador de los códigos QR (Con retorno de depuración de texto)
 @app.post("/registrar-asistencia")
 async def registrar_asistencia(data: EntradaQR, request: Request):
     if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
@@ -150,7 +43,6 @@ async def registrar_asistencia(data: EntradaQR, request: Request):
                     if fila[3] == "ENTRADA":
                         tipo_evento = "SALIDA"
 
-            # 📌 AQUÍ VA EL BLOQUE QUE ME COPIASTE:
             pestaña_asistencia.append_row([
                 f"{fecha_registro} {hora_registro}", 
                 num_control, 
@@ -176,4 +68,4 @@ async def registrar_asistencia(data: EntradaQR, request: Request):
         except Exception as e:
             return {"status": "error", "mensaje": f"Error al conectar con Google Sheets: {str(e)}"}
         
-  return {"status": "error", "mensaje": f"Texto detectado en el QR: {texto}"}
+    return {"status": "error", "mensaje": f"Texto detectado en el QR: {texto}"}
