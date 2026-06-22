@@ -16,12 +16,13 @@
         .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
         
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
-        .modal-content { background-color: white; padding: 25px; border-radius: 12px; max-width: 400px; width: 90%; text-align: left; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; font-size: 14px; font-weight: bold; margin-bottom: 5px; color: #555; }
-        .form-group input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; }
-        .btn-submit { background: #00875a; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; }
-        .btn-close { background: #7f8c8d; color: white; border: none; padding: 8px 15px; margin-top: 10px; width: 100%; border-radius: 6px; cursor: pointer; }
+        .modal-content { background-color: white; padding: 25px; border-radius: 12px; max-width: 440px; width: 90%; text-align: left; box-shadow: 0 5px 15px rgba(0,0,0,0.2); max-height: 85vh; overflow-y: auto; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 13px; font-weight: bold; margin-bottom: 4px; color: #555; }
+        .form-group input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; background-color: #fcfcfc; }
+        .form-group input:read-only { background-color: #eef2f5; color: #495057; cursor: not-allowed; }
+        .btn-submit { background: #00875a; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        .btn-close { background: #7f8c8d; color: white; border: none; padding: 8px 15px; margin-top: 8px; width: 100%; border-radius: 6px; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -34,28 +35,34 @@
 
 <div id="modalAlta" class="modal">
     <div class="modal-content">
-        <h3>🔑 Registrar Alumno Nuevo</h3>
-        <p style="font-size: 12px; color: #7f8c8d; margin-bottom: 15px;">La credencial y su URL oficial se vincularon automáticamente.</p>
+        <h3 style="margin-top: 0; color: #2c3e50;">✨ Autollenado Exitoso</h3>
+        <p style="font-size: 12px; color: #7f8c8d; margin-bottom: 15px;">Los datos institucionales se jalaron del portal. Solo verifique e introduzca el teléfono.</p>
         
         <form id="formAltaAlumno">
             <input type="hidden" id="modalKeyQr">
             <input type="hidden" id="modalUrlCompleta">
             
             <div class="form-group">
-                <label for="modalNumControl">Número de Control:</label>
-                <input type="text" id="modalNumControl" required placeholder="Ej. 22315060..." autocomplete="off">
+                <label>Número de Control:</label>
+                <input type="text" id="modalNumControl" readonly>
             </div>
             <div class="form-group">
-                <label for="modalNombre">Nombre Completo del Alumno:</label>
-                <input type="text" id="modalNombre" required placeholder="APELLIDOS NOMBRE(S)" autocomplete="off">
+                <label>Nombre del Alumno:</label>
+                <input type="text" id="modalNombre" readonly>
             </div>
             <div class="form-group">
-                <label for="modalTelefono">Teléfono del Tutor (10 dígitos):</label>
+                <label style="color: #00875a;">Teléfono del Tutor (Obligatorio - 10 dígitos):</label>
                 <input type="tel" id="modalTelefono" required placeholder="Ej. 8781234567" pattern="[0-9]{10}">
             </div>
             
-            <button type="submit" class="btn-submit">Guardar en Base de Datos</button>
-            <button type="button" class="btn-close" onclick="cerrarModal()">Cancelar</button>
+            <input type="hidden" id="modalCurp">
+            <input type="hidden" id="modalEspecialidad">
+            <input type="hidden" id="modalSemestre">
+            <input type="hidden" id="modalPlantel">
+            <input type="hidden" id="modalImss">
+            
+            <button type="submit" class="btn-submit">Dar de Alta Alumno</button>
+            <button type="button" class="btn-close" onclick="cerrarModal()">Descartar</button>
         </form>
     </div>
 </div>
@@ -76,7 +83,7 @@
         if (escaneoBloqueado) return; 
         escaneoBloqueado = true; 
         
-        mostrarResultado("Analizando credencial...", "alerta");
+        mostrarResultado("Conectando con Servidores CECYTEC...", "alerta");
 
         try {
             const response = await fetch("/registrar-asistencia", {
@@ -93,28 +100,37 @@
                 mostrarResultado(data.mensaje, "error");
                 setTimeout(() => { escaneoBloqueado = false; }, 3500);
             } else if (data.status === "nuevo_registro") {
-                mostrarResultado("Abriendo alta rápida...", "alerta");
-                // Le pasamos la Key Y ADEMÁS la URL completa capturada por el lente
-                abrirModalAlta(data.key_qr, data.url_completa);
+                mostrarResultado("Credencial leída. Abriendo formulario...", "exito");
+                abrirModalAlta(data.key_qr, data.url_completa, data.datos_scraped);
             } else {
                 mostrarResultado(data.mensaje, "error");
                 setTimeout(() => { escaneoBloqueado = false; }, 3000);
             }
         } catch (error) {
-            mostrarResultado("Error de conexión con el servidor.", "error");
+            mostrarResultado("Error de red en el servidor.", "error");
             setTimeout(() => { escaneoBloqueado = false; }, 3000);
         }
     }
 
-    function abrirModalAlta(keyQr, urlCompleta) {
+    function abrirModalAlta(keyQr, urlCompleta, datos) {
+        // Asignación de llaves e inyección automática en campos visuales
         document.getElementById("modalKeyQr").value = keyQr;
-        document.getElementById("modalUrlCompleta").value = urlCompleta; // Guarda la URL oculta
-        document.getElementById("formAltaAlumno").reset();
+        document.getElementById("modalUrlCompleta").value = urlCompleta;
+        document.getElementById("modalNumControl").value = datos.num_control || "No encontrado";
+        document.getElementById("modalNombre").value = datos.alumno || "No encontrado";
+        
+        // Carga silenciosa de metadatos adicionales de auditoría
+        document.getElementById("modalCurp").value = datos.curp || "";
+        document.getElementById("modalEspecialidad").value = datos.especialidad || "";
+        document.getElementById("modalSemestre").value = datos.semestre || "";
+        document.getElementById("modalPlantel").value = datos.plantel || "";
+        document.getElementById("modalImss").value = datos.imss || "";
+
+        document.getElementById("modalTelefono").value = "";
         document.getElementById("modalAlta").style.display = "flex";
         
-        setTimeout(() => {
-            document.getElementById("modalNumControl").focus();
-        }, 100);
+        // Foco inmediato al teléfono del tutor ya que los otros están listos
+        setTimeout(() => { document.getElementById("modalTelefono").focus(); }, 1500);
     }
 
     function cerrarModal() {
@@ -127,13 +143,18 @@
         
         const payload = {
             key_qr: document.getElementById("modalKeyQr").value,
-            url_credencial: document.getElementById("modalUrlCompleta").value, // Añadido al envío HTTP
+            url_credencial: document.getElementById("modalUrlCompleta").value,
             num_control: document.getElementById("modalNumControl").value,
             alumno: document.getElementById("modalNombre").value,
-            telefono_tutor: document.getElementById("modalTelefono").value
+            telefono_tutor: document.getElementById("modalTelefono").value,
+            curp: document.getElementById("modalCurp").value,
+            especialidad: document.getElementById("modalEspecialidad").value,
+            semestre: document.getElementById("modalSemestre").value,
+            plantel: document.getElementById("modalPlantel").value,
+            imss: document.getElementById("modalImss").value
         };
 
-        mostrarResultado("Guardando en Google Sheets...", "alerta");
+        mostrarResultado("Sincronizando expediente en Google Sheets...", "alerta");
         document.getElementById("modalAlta").style.display = "none";
 
         try {
@@ -143,12 +164,7 @@
                 body: JSON.stringify(payload)
             });
             const data = await response.json();
-
-            if (data.status === "exito") {
-                mostrarResultado(data.mensaje, "exito");
-            } else {
-                mostrarResultado(data.mensaje, "error");
-            }
+            mostrarResultado(data.mensaje, data.status === "exito" ? "exito" : "error");
         } catch (error) {
             mostrarResultado("Error al guardar.", "error");
         } finally {
@@ -163,6 +179,5 @@
         html5QrcodeScanner.render(onScanSuccess);
     });
 </script>
-
 </body>
 </html>
