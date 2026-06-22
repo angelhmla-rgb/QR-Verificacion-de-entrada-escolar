@@ -1,38 +1,63 @@
-async function onScanSuccess(decodedText, decodedResult) {
-    if (escanerBloqueado) return;
-    
-    escanerBloqueado = true;
-    actualizarInterfaz("Procesando...", "Verificando código...", "warning");
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Control de Acceso - CECYTEC</title>
+    <script src="/static/html5-qrcode.min.js" type="text/javascript"></script>
+    <style>
+        /* (Mantén tus estilos CSS aquí) */
+        body { font-family: sans-serif; background: #f4f6f9; padding: 20px; }
+        #reader { width: 100%; max-width: 500px; margin: auto; }
+        #status-card { margin-top: 20px; padding: 20px; text-align: center; border-radius: 8px; background: white; }
+    </style>
+</head>
+<body>
 
-    try {
-        const response = await fetch('/registrar-asistencia', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ texto_qr: decodedText })
-        });
-        
-        // Intentamos obtener el JSON, si falla, lanzamos error manual
-        const resultado = await response.json().catch(() => { throw new Error("Respuesta inválida del servidor"); });
+    <div id="reader"></div>
+    <div id="status-card">
+        <h3 id="status-title">Escaneando...</h3>
+        <p id="status-desc">Espera a que el sistema procese el QR.</p>
+    </div>
 
-        if (response.ok) {
-            if (resultado.status === "exito") {
-                actualizarInterfaz("✅ Acceso Registrado", resultado.mensaje, "success");
-                reproducirSonido(true);
-                setTimeout(() => { resetearInterfaz(); }, 3000);
-            } else if (resultado.status === "nuevo_registro") {
-                abrirModalAlta(resultado);
-            } else {
-                actualizarInterfaz("🛑 Denegado", resultado.mensaje || "Error desconocido", "error");
-                setTimeout(() => { resetearInterfaz(); }, 5000);
-            }
-        } else {
-            actualizarInterfaz("❌ Error de Servidor", "Código: " + response.status, "error");
-            setTimeout(() => { resetearInterfaz(); }, 4000);
+    <script>
+        let escanerBloqueado = false;
+
+        function onScanSuccess(decodedText) {
+            if (escanerBloqueado) return;
+            escanerBloqueado = true;
+
+            fetch('/registrar-asistencia', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ texto_qr: decodedText })
+            })
+            .then(async response => {
+                const text = await response.text(); // Leemos como texto primero
+                try {
+                    const data = JSON.parse(text); // Intentamos convertir a JSON
+                    if (response.ok) {
+                        alert("Éxito: " + data.mensaje);
+                    } else {
+                        alert("Error del servidor: " + (data.mensaje || text));
+                    }
+                } catch (e) {
+                    // Si falla el JSON, el servidor envió un error (ej. 500 Internal Server Error)
+                    console.error("Error en respuesta:", text);
+                    alert("Error grave en el servidor. Revisa la consola (F12). Respuesta: " + text.substring(0, 50));
+                }
+            })
+            .catch(err => {
+                alert("Error de conexión: " + err);
+            })
+            .finally(() => {
+                setTimeout(() => { escanerBloqueado = false; }, 3000);
+            });
         }
 
-    } catch (error) {
-        console.error("Error completo:", error);
-        actualizarInterfaz("❌ Error", "No se pudo conectar: " + error.message, "error");
-        setTimeout(() => { resetearInterfaz(); }, 4000);
-    }
-}
+        function onScanFailure(error) { /* Silencioso */ }
+
+        const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
+        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+    </script>
+</body>
+</html>
