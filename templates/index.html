@@ -3,181 +3,104 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Escáner de Asistencia - CECYTEC</title>
+    <title>Control de Acceso - CECYTEC</title>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .container { max-width: 600px; width: 100%; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); text-align: center; }
-        h1 { color: #00875a; font-size: 24px; margin-bottom: 20px; }
-        #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
-        #resultado { margin-top: 20px; padding: 15px; border-radius: 8px; font-weight: bold; font-size: 16px; display: none; }
-        .exito { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .alerta { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
-        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
-        .modal-content { background-color: white; padding: 25px; border-radius: 12px; max-width: 440px; width: 90%; text-align: left; box-shadow: 0 5px 15px rgba(0,0,0,0.2); max-height: 85vh; overflow-y: auto; }
-        .form-group { margin-bottom: 12px; }
-        .form-group label { display: block; font-size: 13px; font-weight: bold; margin-bottom: 4px; color: #555; }
-        .form-group input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; background-color: #fcfcfc; }
-        .form-group input:read-only { background-color: #eef2f5; color: #495057; cursor: not-allowed; }
-        .btn-submit { background: #00875a; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        .btn-close { background: #7f8c8d; color: white; border: none; padding: 8px 15px; margin-top: 8px; width: 100%; border-radius: 6px; cursor: pointer; }
-    </style>
-</head>
-<body>
-
-<div class="container">
-    <h1>📋 Control de Acceso Escolar</h1>
-    <div id="reader"></div>
-    <div id="resultado"></div>
-</div>
-
-<div id="modalAlta" class="modal">
-    <div class="modal-content">
-        <h3 style="margin-top: 0; color: #2c3e50;">✨ Autollenado Exitoso</h3>
-        <p style="font-size: 12px; color: #7f8c8d; margin-bottom: 15px;">Los datos institucionales se jalaron del portal. Solo verifique e introduzca el teléfono.</p>
-        
-        <form id="formAltaAlumno">
-            <input type="hidden" id="modalKeyQr">
-            <input type="hidden" id="modalUrlCompleta">
-            
-            <div class="form-group">
-                <label>Número de Control:</label>
-                <input type="text" id="modalNumControl" readonly>
-            </div>
-            <div class="form-group">
-                <label>Nombre del Alumno:</label>
-                <input type="text" id="modalNombre" readonly>
-            </div>
-            <div class="form-group">
-                <label style="color: #00875a;">Teléfono del Tutor (Obligatorio - 10 dígitos):</label>
-                <input type="tel" id="modalTelefono" required placeholder="Ej. 8781234567" pattern="[0-9]{10}">
-            </div>
-            
-            <input type="hidden" id="modalCurp">
-            <input type="hidden" id="modalEspecialidad">
-            <input type="hidden" id="modalSemestre">
-            <input type="hidden" id="modalPlantel">
-            <input type="hidden" id="modalImss">
-            
-            <button type="submit" class="btn-submit">Dar de Alta Alumno</button>
-            <button type="button" class="btn-close" onclick="cerrarModal()">Descartar</button>
-        </form>
-    </div>
-</div>
-
-<script>
-    let html5QrcodeScanner;
-    let escaneoBloqueado = false; 
-
-    function mostrarResultado(mensaje, tipo) {
-        const resDiv = document.getElementById("resultado");
-        resDiv.innerText = mensaje;
-        resDiv.className = ""; 
-        resDiv.classList.add(tipo);
-        resDiv.style.display = "block";
-    }
-
-    async function onScanSuccess(decodedText, decodedResult) {
-        if (escaneoBloqueado) return; 
-        escaneoBloqueado = true; 
-        
-        mostrarResultado("Conectando con Servidores CECYTEC...", "alerta");
-
-        try {
-            const response = await fetch("/registrar-asistencia", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ texto_qr: decodedText })
-            });
-            const data = await response.json();
-
-            if (data.status === "exito") {
-                mostrarResultado(data.mensaje, "exito");
-                setTimeout(() => { escaneoBloqueado = false; }, 1500);
-            } else if (data.status === "alerta") {
-                mostrarResultado(data.mensaje, "error");
-                setTimeout(() => { escaneoBloqueado = false; }, 3500);
-            } else if (data.status === "nuevo_registro") {
-                mostrarResultado("Credencial leída. Abriendo formulario...", "exito");
-                abrirModalAlta(data.key_qr, data.url_completa, data.datos_scraped);
-            } else {
-                mostrarResultado(data.mensaje, "error");
-                setTimeout(() => { escaneoBloqueado = false; }, 3000);
-            }
-        } catch (error) {
-            mostrarResultado("Error de red en el servidor.", "error");
-            setTimeout(() => { escaneoBloqueado = false; }, 3000);
+        :root {
+            --primary: #00875a;
+            --primary-dark: #006c48;
+            --secondary: #2c3e50;
+            --danger: #d32f2f;
+            --warning: #f57c00;
+            --bg: #f4f6f9;
         }
-    }
 
-    function abrirModalAlta(keyQr, urlCompleta, datos) {
-        // Asignación de llaves e inyección automática en campos visuales
-        document.getElementById("modalKeyQr").value = keyQr;
-        document.getElementById("modalUrlCompleta").value = urlCompleta;
-        document.getElementById("modalNumControl").value = datos.num_control || "No encontrado";
-        document.getElementById("modalNombre").value = datos.alumno || "No encontrado";
-        
-        // Carga silenciosa de metadatos adicionales de auditoría
-        document.getElementById("modalCurp").value = datos.curp || "";
-        document.getElementById("modalEspecialidad").value = datos.especialidad || "";
-        document.getElementById("modalSemestre").value = datos.semestre || "";
-        document.getElementById("modalPlantel").value = datos.plantel || "";
-        document.getElementById("modalImss").value = datos.imss || "";
-
-        document.getElementById("modalTelefono").value = "";
-        document.getElementById("modalAlta").style.display = "flex";
-        
-        // Foco inmediato al teléfono del tutor ya que los otros están listos
-        setTimeout(() => { document.getElementById("modalTelefono").focus(); }, 1500);
-    }
-
-    function cerrarModal() {
-        document.getElementById("modalAlta").style.display = "none";
-        escaneoBloqueado = false; 
-    }
-
-    document.getElementById("formAltaAlumno").addEventListener("submit", async (e) => {
-        e.preventDefault();
-        
-        const payload = {
-            key_qr: document.getElementById("modalKeyQr").value,
-            url_credencial: document.getElementById("modalUrlCompleta").value,
-            num_control: document.getElementById("modalNumControl").value,
-            alumno: document.getElementById("modalNombre").value,
-            telefono_tutor: document.getElementById("modalTelefono").value,
-            curp: document.getElementById("modalCurp").value,
-            especialidad: document.getElementById("modalEspecialidad").value,
-            semestre: document.getElementById("modalSemestre").value,
-            plantel: document.getElementById("modalPlantel").value,
-            imss: document.getElementById("modalImss").value
-        };
-
-        mostrarResultado("Sincronizando expediente en Google Sheets...", "alerta");
-        document.getElementById("modalAlta").style.display = "none";
-
-        try {
-            const response = await fetch("/dar-de-alta", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-            const data = await response.json();
-            mostrarResultado(data.mensaje, data.status === "exito" ? "exito" : "error");
-        } catch (error) {
-            mostrarResultado("Error al guardar.", "error");
-        } finally {
-            setTimeout(() => { escaneoBloqueado = false; }, 2000);
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            padding: 0;
+            color: var(--secondary);
         }
-    });
 
-    window.addEventListener('DOMContentLoaded', () => {
-        html5QrcodeScanner = new Html5QrcodeScanner(
-            "reader", { fps: 15, qrbox: { width: 250, height: 250 }, rememberLastUsedCamera: true }, false
-        );
-        html5QrcodeScanner.render(onScanSuccess);
-    });
-</script>
-</body>
-</html>
+        header {
+            background-color: var(--secondary);
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 20px auto;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        /* Contenedor de la Cámara */
+        #reader {
+            width: 100%;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            border: none !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+
+        /* Pantalla de Estado Dinámica */
+        #status-card {
+            background: white;
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .status-idle { border-left: 6px solid #ccc; }
+        .status-success { border-left: 6px solid var(--primary); background-color: #ebf7f2; }
+        .status-error { border-left: 6px solid var(--danger); background-color: #fdf2f2; }
+        .status-warning { border-left: 6px solid var(--warning); background-color: #fffaf4; }
+
+        /* Modal para Alta de Nuevos Alumnos */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            overflow-y: auto;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 450px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-content h3 {
+            margin-top: 0;
+            color: var(--secondary);
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        .form-group label {
+            display
