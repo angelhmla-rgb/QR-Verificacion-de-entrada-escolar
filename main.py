@@ -63,7 +63,7 @@ def actualizar_cache_tutores():
         nueva_cache = {}
         # Estructura estricta: A: NUM_CONTROL, B: ALUMNO, C: TEL_TUTOR, D: STATUS, E: KEY_QR
         for fila in todas_las_filas[1:]:
-            if len(fila) >= 5 and fila[4].strip():  # Validar que tenga KEY_QR en columna E
+            if len(fila) >= 5 and fila[4].strip():
                 nueva_cache[fila[4].strip()] = {
                     "num_control": fila[0],
                     "alumno": fila[1],
@@ -108,4 +108,150 @@ def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fe
         
         # Determinación inteligente de ENTRADA/SALIDA leyendo la hoja de forma diferida
         registros_hoy = pestaña_asistencia.get_all_values()
-        tipo_evento
+        tipo_evento = "ENTRADA"
+        
+        for fila in registros_hoy:
+            if len(fila) >= 4 and fila[0].startswith(fecha_registro) and fila[1] == num_control:
+                if fila[3] == "ENTRADA":
+                    tipo_evento = "SALIDA"
+
+        # Escritura en Google Sheets
+        pestaña_asistencia.append_row([
+            f"{fecha_registro} {hora_registro}", 
+            num_control, 
+            alumno, 
+            tipo_evento, 
+            "Permitido"
+        ])
+        
+        # Envío del mensaje de WhatsApp
+        if telefono_tutor and str(telefono_tutor).strip():
+            saludo = "Buenos días" if "AM" in hora_registro else "Buenas tardes"
+            mensaje_wa = f"📝 *CECYTEC Informa:*\n\n{saludo}, le notificamos que el alumno(a) *{alumno}* ha registrado su *{tipo_evento}* del plantel el día de hoy a las {hora_registro}."
+            enviar_mensaje_whatsapp(telefono_tutor, mensaje_wa)
+            
+        print(f"✅ Asistencia registrada de fondo para {alumno} ({tipo_evento})")
+    except Exception as e:
+        print(f"❌ Error en tarea asíncrona de Sheets/WhatsApp: {str(e)}")
+
+# Pantalla de inicio de sesión / Filtro de seguridad
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    sesion = request.cookies.get(COOKIE_NAME)
+    if sesion == CLAVE_SECRETA:
+        return templates.TemplateResponse("index.html", {"request": request})
+    
+    html_login = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Acceso Restringido - CECYTEC</title>
+        <style>
+            body { font-family: sans-serif; background: #f4f6f9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; max-width: 360px; width: 90%; }
+            h2 { color: #2c3e50; margin-bottom: 10px; }
+            p { color: #7f8c8d; font-size: 14px; margin-bottom: 20px; }
+            input[type="password"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+            button { width: 100%; padding: 12px; background: #00875a; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
+            button:hover { background: #006c48; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>⚠️ Control de Acceso</h2>
+            <p>Esta página es de uso exclusivo para el personal autorizado en la puerta del plantel.</p>
+            <form method="post" action="/login">
+                <input type="password" name="clave" placeholder="Contraseña de Prefectura" required>
+                <button type="submit">Iniciar Escáner</button>
+            </form>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_login)
+
+# Procesar la contraseña ingresada
+@app.post("/login")
+async def login(clave: str = Form(...)):
+    if clave == CLAVE_SECRETA:
+        response = RedirectResponse(url="/", status_code=303)
+        response.set_cookie(key=COOKIE_NAME, value=CLAVE_SECRETA, max_age=28800)
+        return response
+    return HTMLResponse(content="<script>alert('Contraseña Incorrecta'); window.location='/';</script>")
+
+# Procesador de códigos QR con Búsqueda Ultra Rápida en RAM
+@app.post("/registrar-asistencia")
+async def registrar_asistencia(data: EntradaQR, request: Request, background_tasks: BackgroundTasks):
+    if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
+        return {"status": "error", "mensaje": "No autorizado para registrar asistencia."}
+
+    texto = data.texto_qr
+    key_match = re.search(r"[?&]key=([^&]+)", texto)
+    
+    if not key_match:
+        return {"status": "error", "mensaje": "Código QR no válido. No contiene un formato oficial de credencial CECYTEC."}
+    
+    key_alumno = key_match.group(1).strip()
+    
+    # BÚSQUEDA INSTANTÁNEA EN MEMORIA CACHÉ
+    if key_alumno not in CACHE_TUTORES:
+        return {
+            "status": "nuevo_registro", 
+            "key_qr": key_alumno,
+            "mensaje": "Nueva credencial detectada. ¿Deseas dar de alta al alumno en el sistema?"
+        }
+    
+    datos_alumno = CACHE_TUTORES[key_alumno]
+    num_control = datos_alumno["num_control"]
+    alumno = datos_alumno["alumno"]
+    telefono_tutor = datos_alumno["telefono_tutor"]
+    status = datos_alumno["status"]
+    
+    if "BAJA" in status.upper() or "NO VIGENTE" in status.upper():
+        return {
+            "status": "alerta",
+            "mensaje": f"ACCESO DENEGADO: El alumno {alumno} tiene estatus de {status.upper()}."
+        }
+    
+    ahora = datetime.now()
+    fecha_registro = ahora.strftime("%Y-%m-%d")
+    hora_registro = ahora.strftime("%I:%M %p")
+
+    # Lanzamos el proceso pesado en segundo plano
+    background_tasks.add_task(
+        procesar_asistencia_en_segundo_plano,
+        num_control, alumno, telefono_tutor, fecha_registro, hora_registro
+    )
+    
+    return {
+        "status": "exito",
+        "mensaje": f"Procesando acceso para: {alumno}. ¡Siguiente en la fila!"
+    }
+
+# NUEVO ENDPOINT: Registra alumnos nuevos y actualiza la caché al instante
+@app.post("/dar-de-alta")
+async def dar_de_alta(alumno_data: NuevoAlumno, request: Request):
+    if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
+        return {"status": "error", "mensaje": "No autorizado para realizar esta acción."}
+    
+    try:
+        doc = conectar_sheets()
+        pestaña_tutores = doc.worksheet("Directorio_Tutores")
+        
+        # Insertar en orden estricto de columnas (A-E)
+        pestaña_tutores.append_row([
+            alumno_data.num_control.strip(),
+            alumno_data.alumno.strip().upper(),
+            alumno_data.telefono_tutor.strip(),
+            "ACTIVO",
+            alumno_data.key_qr.strip()
+        ])
+        
+        # Forzar la recarga de la caché en memoria RAM
+        actualizar_cache_tutores()
+        
+        return {"status": "exito", "mensaje": f"El alumno {alumno_data.alumno} fue registrado de forma exitosa y ya está ACTIVO."}
+    except Exception as e:
+        return {"status": "error", "mensaje": f"Fallo al escribir en Google Sheets: {str(e)}"}
