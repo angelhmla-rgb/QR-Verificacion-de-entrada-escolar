@@ -3,102 +3,173 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CECYTEC - Control de Acceso</title>
-    <script src="https://unpkg.com/html5-qrcode"></script>
+    <title>Escáner de Asistencia - CECYTEC</title>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f4f6f9;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .container {
-            max-width: 500px;
-            width: 100%;
-            background: white;
-            padding: 20px;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        h2 { color: #2c3e50; margin-bottom: 5px; }
-        p { color: #7f8c8d; margin-top: 0; font-size: 14px; }
-        #reader {
-            width: 100%;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 2px solid #bdc3c7;
-        }
-        #resultado {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 8px;
-            font-weight: bold;
-            display: none;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { max-width: 600px; width: 100%; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); text-align: center; }
+        h1 { color: #00875a; font-size: 24px; margin-bottom: 20px; }
+        #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
+        #resultado { margin-top: 20px; padding: 15px; border-radius: 8px; font-weight: bold; font-size: 16px; display: none; }
         .exito { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .alerta { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .alerta { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        
+        /* --- ESTILOS DEL MODAL FLOTANTE --- */
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
+        .modal-content { background-color: white; padding: 25px; border-radius: 12px; max-width: 400px; width: 90%; text-align: left; box-shadow: 0 5px 15px rgba(0,0,0,0.2); animation: fadeIn 0.3s; }
+        .modal-content h3 { margin-top: 0; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 14px; font-weight: bold; margin-bottom: 5px; color: #555; }
+        .form-group input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; }
+        .btn-submit { background: #00875a; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+        .btn-submit:hover { background: #006c48; }
+        .btn-close { background: #7f8c8d; color: white; border: none; padding: 8px 15px; margin-top: 10px; width: 100%; border-radius: 6px; cursor: pointer; }
+        
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>CECYTEC Norte</h2>
-    <p>Escáner de Credenciales Oficiales</p>
-    
+    <h1>📋 Control de Acceso Escolar</h1>
     <div id="reader"></div>
-    
     <div id="resultado"></div>
 </div>
 
-<script>
-    function onScanSuccess(decodedText, decodedResult) {
-        // Pausar el escáner momentáneamente para no procesar el mismo QR mil veces
-        html5QrcodeScanner.clear();
+<div id="modalAlta" class="modal">
+    <div class="modal-content">
+        <h3>🔑 Registrar Alumno Nuevo</h3>
+        <p style="font-size: 12px; color: #7f8c8d; margin-bottom: 15px;">La credencial leída no se encuentra registrada en la base de datos.</p>
         
-        const resultadoDiv = document.getElementById('resultado');
-        resultadoDiv.style.display = 'block';
-        resultadoDiv.className = 'exito';
-        resultadoDiv.innerText = "Procesando datos del alumno...";
+        <form id="formAltaAlumno">
+            <input type="hidden" id="modalKeyQr">
+            
+            <div class="form-group">
+                <label for="modalNumControl">Número de Control:</label>
+                <input type="text" id="modalNumControl" required placeholder="Ej. 22315060...">
+            </div>
+            <div class="form-group">
+                <label for="modalNombre">Nombre Completo del Alumno:</label>
+                <input type="text" id="modalNombre" required placeholder="APELLIDOS NOMBRE(S)">
+            </div>
+            <div class="form-group">
+                <label for="modalTelefono">Teléfono del Tutor (10 dígitos):</label>
+                <input type="tel" id="modalTelefono" required placeholder="Ej. 8781234567" pattern="[0-9]{10}">
+            </div>
+            
+            <button type="submit" class="btn-submit">Guardar en Base de Datos</button>
+            <button type="button" class="btn-close" onclick="cerrarModal()">Cancelar</button>
+        </form>
+    </div>
+</div>
 
-        // Enviar el texto plano del QR al backend en Railway
-        fetch('/registrar-asistencia', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ texto_qr: decodedText })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === "alerta") {
-                resultadoDiv.className = 'alerta';
-                resultadoDiv.innerText = "🚨 " + data.mensaje;
-            } else if (data.status === "exito") {
-                resultadoDiv.className = 'exito';
-                resultadoDiv.innerText = "✅ " + data.mensaje;
+<script>
+    let html5QrcodeScanner;
+    let escaneoBloqueado = false; // Flag para no acumular peticiones repetidas al procesar
+
+    function mostrarResultado(mensaje, tipo) {
+        const resDiv = document.getElementById("resultado");
+        resDiv.innerText = mensaje;
+        resDiv.className = ""; // Limpiar clases previas
+        resDiv.classList.add(tipo);
+        resDiv.style.display = "block";
+    }
+
+    // Procesador principal de lectura de código QR
+    async function onScanSuccess(decodedText, decodedResult) {
+        if (escaneoBloqueado) return; 
+        escaneoBloqueado = true; // Bloqueamos temporalmente lecturas adicionales
+        
+        mostrarResultado("Procesando código escaneado...", "alerta");
+
+        try {
+            const response = await fetch("/registrar-asistencia", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ texto_qr: decodedText })
+            });
+            const data = await response.json();
+
+            if (data.status === "exito") {
+                mostrarResultado(data.mensaje, "exito");
+                // Desbloqueamos el escáner a los 2 segundos para permitir el siguiente alumno de la fila
+                setTimeout(() => { escaneoBloqueado = false; }, 2000);
+            } else if (data.status === "alerta") {
+                mostrarResultado(data.mensaje, "alerta");
+                setTimeout(() => { escaneoBloqueado = false; }, 4000);
+            } else if (data.status === "nuevo_registro") {
+                mostrarResultado("Abriendo formulario de registro...", "alerta");
+                abrirModalAlta(data.key_qr);
             } else {
-                resultadoDiv.className = 'alerta';
-                resultadoDiv.innerText = "❌ " + data.mensaje;
+                mostrarResultado(data.mensaje, "error");
+                setTimeout(() => { escaneoBloqueado = false; }, 3000);
             }
-            // Reiniciar el escáner después de 3 segundos para el siguiente alumno
-            setTimeout(inicializarEscaner, 3000);
-        })
-        .catch(error => {
-            resultadoDiv.className = 'alerta';
-            resultadoDiv.innerText = "Error de conexión con el servidor.";
-            setTimeout(inicializarEscaner, 3000);
-        });
+        } catch (error) {
+            mostrarResultado("Error al conectar con el servidor central.", "error");
+            setTimeout(() => { escaneoBloqueado = false; }, 3000);
+        }
     }
 
-    function inicializarEscaner() {
-        window.html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
+    // Funciones de control de la ventana modal
+    function abrirModalAlta(keyQr) {
+        document.getElementById("modalKeyQr").value = keyQr;
+        document.getElementById("formAltaAlumno").reset();
+        document.getElementById("modalAlta").style.display = "flex";
+    }
+
+    function cerrarModal() {
+        document.getElementById("modalAlta").style.display = "none";
+        escaneoBloqueado = false; // Reanudamos el escáner al cerrar
+    }
+
+    // Envío del formulario de alta rápida mediante fetch
+    document.getElementById("formAltaAlumno").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        
+        const payload = {
+            key_qr: document.getElementById("modalKeyQr").value,
+            num_control: document.getElementById("modalNumControl").value,
+            alumno: document.getElementById("modalNombre").value,
+            telefono_tutor: document.getElementById("modalTelefono").value
+        };
+
+        mostrarResultado("Guardando alumno nuevo...", "alerta");
+        document.getElementById("modalAlta").style.display = "none";
+
+        try {
+            const response = await fetch("/dar-de-alta", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+
+            if (data.status === "exito") {
+                mostrarResultado(data.mensaje, "exito");
+            } else {
+                mostrarResultado(data.mensaje, "error");
+            }
+        } catch (error) {
+            mostrarResultado("Error de red al intentar registrar al alumno.", "error");
+        } finally {
+            setTimeout(() => { escaneoBloqueado = false; }, 2000);
+        }
+    });
+
+    // Inicialización del lector QR optimizado para celulares
+    window.addEventListener('DOMContentLoaded', () => {
+        html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", 
+            { 
+                fps: 15,                  // Mayor frecuencia de fotogramas para captura rápida
+                qrbox: { width: 250, height: 250 },
+                rememberLastUsedCamera: true
+            },
+            /* verbose= */ false
+        );
         html5QrcodeScanner.render(onScanSuccess);
-    }
-
-    // Arrancar la cámara al abrir la página
-    inicializarEscaner();
+    });
 </script>
 
 </body>
