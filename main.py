@@ -152,3 +152,67 @@ def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fe
         if telefono_tutor and str(telefono_tutor).strip():
             saludo = "Buenos días" if "AM" in hora_registro else "Buenas tardes"
             mensaje_wa = f"📝 *CECYTEC Informa:*\n\n{saludo}, le notificamos que el alumno(a) *{alumno}* ha registrado su *{tipo_evento}* del plantel el día de hoy a las {hora_registro}."
+            enviar_mensaje_whatsapp(telefono_tutor, mensaje_wa)
+    except Exception as e:
+        print(f"❌ Error en tarea asíncrona: {str(e)}")
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    sesion = request.cookies.get(COOKIE_NAME)
+    if sesion == CLAVE_SECRETA:
+        return templates.TemplateResponse(request, "index.html")
+    
+    html_login = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Acceso Restringido - CECYTEC</title>
+        <style>
+            body { font-family: sans-serif; background: #f4f6f9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; max-width: 360px; width: 90%; }
+            h2 { color: #2c3e50; margin-bottom: 10px; }
+            p { color: #7f8c8d; font-size: 14px; margin-bottom: 20px; }
+            input[type="password"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+            button { width: 100%; padding: 12px; background: #00875a; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
+            button:hover { background: #006c48; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>⚠️ Control de Acceso</h2>
+            <p>Uso exclusivo para personal autorizado en la puerta del plantel.</p>
+            <form method="post" action="/login">
+                <input type="password" name="clave" placeholder="Contraseña de Prefectura" required>
+                <button type="submit">Iniciar Escáner</button>
+            </form>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_login)
+
+@app.post("/login")
+async def login(clave: str = Form(...)):
+    if clave == CLAVE_SECRETA:
+        response = RedirectResponse(url="/", status_code=303)
+        response.set_cookie(key=COOKIE_NAME, value=CLAVE_SECRETA, max_age=28800)
+        return response
+    return HTMLResponse(content="<script>alert('Contraseña Incorrecta'); window.location='/';</script>")
+
+@app.post("/registrar-asistencia")
+async def registrar_asistencia(data: EntradaQR, request: Request, background_tasks: BackgroundTasks):
+    if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
+        return {"status": "error", "mensaje": "No autorizado."}
+
+    texto = data.texto_qr
+    key_match = re.search(r"[?&]key=([^&]+)", texto)
+    
+    if not key_match:
+        return {"status": "error", "mensaje": "Código QR no válido. Formato no oficial."}
+    
+    key_alumno = key_match.group(1).strip()
+    
+    if key_alumno not in CACHE_TUTORES:
+        print(f"
