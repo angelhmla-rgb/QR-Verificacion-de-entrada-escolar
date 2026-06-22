@@ -61,7 +61,7 @@ def actualizar_cache_tutores():
         todas_las_filas = pestaña_tutores.get_all_values()
         
         nueva_cache = {}
-        # Asumiendo fila 1 como cabecera: NUM_CONTROL, ALUMNO, TEL_TUTOR, STATUS, KEY_QR
+        # Estructura estricta: A: NUM_CONTROL, B: ALUMNO, C: TEL_TUTOR, D: STATUS, E: KEY_QR
         for fila in todas_las_filas[1:]:
             if len(fila) >= 5 and fila[4].strip():  # Validar que tenga KEY_QR en columna E
                 nueva_cache[fila[4].strip()] = {
@@ -73,4 +73,21 @@ def actualizar_cache_tutores():
         CACHE_TUTORES = nueva_cache
         print("⚡ [CACHÉ] Base de datos sincronizada en memoria con éxito.")
     except Exception as e:
-        print(f"❌ Error crítico
+        print(f"❌ Error crítico al inicializar la caché: {str(e)}")
+
+# Evento de inicio: Carga los alumnos al arrancar el contenedor en Railway
+@app.on_event("startup")
+async def startup_event():
+    actualizar_cache_tutores()
+
+# Función para enviar las notificaciones a los tutores
+def enviar_mensaje_whatsapp(telefono_tutor, mensaje):
+    if not str(telefono_tutor).startswith("52"):
+        telefono_tutor = f"52{telefono_tutor}"
+        
+    payload = {
+        "chatId": f"{telefono_tutor}@c.us",
+        "text": mensaje
+    }
+    headers = {
+        "Authorization":
