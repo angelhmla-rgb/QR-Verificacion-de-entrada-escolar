@@ -29,6 +29,7 @@ COOKIE_NAME = "sesion_prefecto"
 async def home(request: Request):
     sesion = request.cookies.get(COOKIE_NAME)
     if sesion == CLAVE_SECRETA:
-        return templates.TemplateResponse("index.html", {"request": request})
-    
+       return templates.TemplateResponse(
+    request=request, name="index.html", context={}
+)
     # ... (Tu HTML de login aquí)
