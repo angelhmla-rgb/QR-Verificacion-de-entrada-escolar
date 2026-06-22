@@ -89,5 +89,23 @@ def enviar_mensaje_whatsapp(telefono_tutor, mensaje):
         "chatId": f"{telefono_tutor}@c.us",
         "text": mensaje
     }
+    
     headers = {
-        "Authorization":
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        requests.post(WHATSAPP_API_URL, json=payload, headers=headers, timeout=5)
+    except Exception as e:
+        print(f"❌ Fallo de conexión con WhatsApp: {str(e)}")
+
+# Proceso asíncrono en segundo plano para no retrasar la fila de alumnos en la entrada
+def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fecha_registro, hora_registro):
+    try:
+        doc = conectar_sheets()
+        pestaña_asistencia = doc.worksheet("Asistencia_Diaria")
+        
+        # Determinación inteligente de ENTRADA/SALIDA leyendo la hoja de forma diferida
+        registros_hoy = pestaña_asistencia.get_all_values()
+        tipo_evento
