@@ -215,4 +215,60 @@ async def registrar_asistencia(data: EntradaQR, request: Request, background_tas
     key_alumno = key_match.group(1).strip()
     
     if key_alumno not in CACHE_TUTORES:
-        print(f"
+        print(f"🔍 Buscando datos en portal institucional para Key: {key_alumno}")
+        datos_extraidos = extraer_datos_cecytec(texto)
+        
+        return {
+            "status": "nuevo_registro", 
+            "key_qr": key_alumno,
+            "url_completa": texto,
+            "datos_scraped": datos_extraidos,
+            "mensaje": "Nueva credencial detectada."
+        }
+    
+    datos_alumno = CACHE_TUTORES[key_alumno]
+    num_control = datos_alumno["num_control"]
+    alumno = datos_alumno["alumno"]
+    telefono_tutor = datos_alumno["telefono_tutor"]
+    status = datos_alumno["status"]
+    
+    if "BAJA" in status.upper() or "NO VIGENTE" in status.upper():
+        return {"status": "alerta", "mensaje": f"ACCESO DENEGADO: {alumno} está de {status.upper()}."}
+    
+    ahora = datetime.now()
+    fecha_registro = ahora.strftime("%Y-%m-%d")
+    hora_registro = ahora.strftime("%I:%M %p")
+
+    background_tasks.add_task(
+        procesar_asistencia_en_segundo_plano,
+        num_control, alumno, telefono_tutor, fecha_registro, hora_registro
+    )
+    return {"status": "exito", "mensaje": f"Procesando acceso para: {alumno}."}
+
+@app.post("/dar-de-alta")
+async def dar_de_alta(alumno_data: NuevoAlumno, request: Request):
+    if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
+        return {"status": "error", "mensaje": "No autorizado."}
+    
+    try:
+        doc = conectar_sheets()
+        pestaña_tutores = doc.worksheet("Directorio_Tutores")
+        
+        pestaña_tutores.append_row([
+            alumno_data.num_control.strip(),
+            alumno_data.alumno.strip().upper(),
+            alumno_data.telefono_tutor.strip(),
+            "ACTIVO",
+            alumno_data.key_qr.strip(),
+            alumno_data.url_credencial.strip(),
+            alumno_data.curp.strip().upper(),
+            alumno_data.especialidad.strip().upper(),
+            alumno_data.semestre.strip().upper(),
+            alumno_data.plantel.strip().upper(),
+            alumno_data.imss.strip()
+        ])
+        
+        actualizar_cache_tutores()
+        return {"status": "exito", "mensaje": f"Perfil completo de {alumno_data.alumno} almacenado."}
+    except Exception as e:
+        return {"status": "error", "mensaje": f"Fallo al escribir en Sheets: {str(e)}"}
