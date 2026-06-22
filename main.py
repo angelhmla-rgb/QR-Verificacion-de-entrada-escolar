@@ -25,7 +25,7 @@ WHATSAPP_TOKEN = "UnTokenSeguroCreadoPorTi"
 # --- VARIABLES GLOBALES DE CACHÉ ---
 CACHE_TUTORES = {}
 
-# MODELOS DE DATOS (PYDANTIC)
+# MODELOS DE DATOS (PYDANTIC) - Se agrega url_credencial para el registro
 class EntradaQR(BaseModel):
     texto_qr: str
 
@@ -34,6 +34,7 @@ class NuevoAlumno(BaseModel):
     num_control: str
     alumno: str
     telefono_tutor: str
+    url_credencial: str
 
 # Conexión Segura con Google Sheets
 def conectar_sheets():
@@ -52,7 +53,7 @@ def conectar_sheets():
     client = gspread.authorize(creds)
     return client.open_by_url("https://docs.google.com/spreadsheets/d/193NV0p1OQsZAZy-f-gtOQZE743lh6yC6GgtlYzTHTkY/edit?usp=sharing")
 
-# Función para sincronizar la base de datos completa a la memoria RAM del servidor
+# Sincronización en memoria RAM
 def actualizar_cache_tutores():
     global CACHE_TUTORES
     try:
@@ -61,7 +62,6 @@ def actualizar_cache_tutores():
         todas_las_filas = pestaña_tutores.get_all_values()
         
         nueva_cache = {}
-        # Estructura estricta: A: NUM_CONTROL, B: ALUMNO, C: TEL_TUTOR, D: STATUS, E: KEY_QR
         for fila in todas_las_filas[1:]:
             if len(fila) >= 5 and fila[4].strip():
                 nueva_cache[fila[4].strip()] = {
@@ -75,12 +75,10 @@ def actualizar_cache_tutores():
     except Exception as e:
         print(f"❌ Error crítico al inicializar la caché: {str(e)}")
 
-# Evento de inicio: Carga los alumnos al arrancar el contenedor en Railway
 @app.on_event("startup")
 async def startup_event():
     actualizar_cache_tutores()
 
-# Función para enviar las notificaciones a los tutores
 def enviar_mensaje_whatsapp(telefono_tutor, mensaje):
     if not str(telefono_tutor).startswith("52"):
         telefono_tutor = f"52{telefono_tutor}"
@@ -89,24 +87,20 @@ def enviar_mensaje_whatsapp(telefono_tutor, mensaje):
         "chatId": f"{telefono_tutor}@c.us",
         "text": mensaje
     }
-    
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
     }
-    
     try:
         requests.post(WHATSAPP_API_URL, json=payload, headers=headers, timeout=5)
     except Exception as e:
         print(f"❌ Fallo de conexión con WhatsApp: {str(e)}")
 
-# Proceso asíncrono en segundo plano para no retrasar la fila de alumnos en la entrada
 def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fecha_registro, hora_registro):
     try:
         doc = conectar_sheets()
         pestaña_asistencia = doc.worksheet("Asistencia_Diaria")
         
-        # Determinación inteligente de ENTRADA/SALIDA leyendo la hoja de forma diferida
         registros_hoy = pestaña_asistencia.get_all_values()
         tipo_evento = "ENTRADA"
         
@@ -115,7 +109,6 @@ def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fe
                 if fila[3] == "ENTRADA":
                     tipo_evento = "SALIDA"
 
-        # Escritura en Google Sheets
         pestaña_asistencia.append_row([
             f"{fecha_registro} {hora_registro}", 
             num_control, 
@@ -124,7 +117,6 @@ def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fe
             "Permitido"
         ])
         
-        # Envío del mensaje de WhatsApp
         if telefono_tutor and str(telefono_tutor).strip():
             saludo = "Buenos días" if "AM" in hora_registro else "Buenas tardes"
             mensaje_wa = f"📝 *CECYTEC Informa:*\n\n{saludo}, le notificamos que el alumno(a) *{alumno}* ha registrado su *{tipo_evento}* del plantel el día de hoy a las {hora_registro}."
@@ -134,7 +126,6 @@ def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fe
     except Exception as e:
         print(f"❌ Error en tarea asíncrona de Sheets/WhatsApp: {str(e)}")
 
-# Pantalla de inicio de sesión / Filtro de seguridad
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     sesion = request.cookies.get(COOKIE_NAME)
@@ -172,7 +163,6 @@ async def home(request: Request):
     """
     return HTMLResponse(content=html_login)
 
-# Procesar la contraseña ingresada
 @app.post("/login")
 async def login(clave: str = Form(...)):
     if clave == CLAVE_SECRETA:
@@ -181,7 +171,6 @@ async def login(clave: str = Form(...)):
         return response
     return HTMLResponse(content="<script>alert('Contraseña Incorrecta'); window.location='/';</script>")
 
-# Procesador de códigos QR con Búsqueda Ultra Rápida en RAM
 @app.post("/registrar-asistencia")
 async def registrar_asistencia(data: EntradaQR, request: Request, background_tasks: BackgroundTasks):
     if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
@@ -195,12 +184,12 @@ async def registrar_asistencia(data: EntradaQR, request: Request, background_tas
     
     key_alumno = key_match.group(1).strip()
     
-    # BÚSQUEDA INSTANTÁNEA EN MEMORIA CACHÉ
     if key_alumno not in CACHE_TUTORES:
         return {
             "status": "nuevo_registro", 
             "key_qr": key_alumno,
-            "mensaje": "Nueva credencial detectada. ¿Deseas dar de alta al alumno en el sistema?"
+            "url_completa": texto, # Enviamos la URL original de vuelta al frontend para el guardado
+            "mensaje": "Nueva credencial detectada. Abriendo formulario de alta..."
         }
     
     datos_alumno = CACHE_TUTORES[key_alumno]
@@ -219,7 +208,6 @@ async def registrar_asistencia(data: EntradaQR, request: Request, background_tas
     fecha_registro = ahora.strftime("%Y-%m-%d")
     hora_registro = ahora.strftime("%I:%M %p")
 
-    # Lanzamos el proceso pesado en segundo plano
     background_tasks.add_task(
         procesar_asistencia_en_segundo_plano,
         num_control, alumno, telefono_tutor, fecha_registro, hora_registro
@@ -227,10 +215,9 @@ async def registrar_asistencia(data: EntradaQR, request: Request, background_tas
     
     return {
         "status": "exito",
-        "mensaje": f"Procesando acceso para: {alumno}. ¡Siguiente en la fila!"
+        "mensaje": f"Procesando acceso para: {alumno}. ¡Siguiente!"
     }
 
-# NUEVO ENDPOINT: Registra alumnos nuevos y actualiza la caché al instante
 @app.post("/dar-de-alta")
 async def dar_de_alta(alumno_data: NuevoAlumno, request: Request):
     if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
@@ -240,18 +227,17 @@ async def dar_de_alta(alumno_data: NuevoAlumno, request: Request):
         doc = conectar_sheets()
         pestaña_tutores = doc.worksheet("Directorio_Tutores")
         
-        # Insertar en orden estricto de columnas (A-E)
+        # Guardamos en orden estricto: A:Num, B:Nombre, C:Tel, D:Status, E:Key_QR, F:URL_Completa
         pestaña_tutores.append_row([
             alumno_data.num_control.strip(),
             alumno_data.alumno.strip().upper(),
             alumno_data.telefono_tutor.strip(),
             "ACTIVO",
-            alumno_data.key_qr.strip()
+            alumno_data.key_qr.strip(),
+            alumno_data.url_credencial.strip() # <--- NUEVA COLUMNA F EN GOOGLE SHEETS
         ])
         
-        # Forzar la recarga de la caché en memoria RAM
         actualizar_cache_tutores()
-        
-        return {"status": "exito", "mensaje": f"El alumno {alumno_data.alumno} fue registrado de forma exitosa y ya está ACTIVO."}
+        return {"status": "exito", "mensaje": f"El alumno {alumno_data.alumno} fue registrado con éxito y su URL fue respaldada."}
     except Exception as e:
-        return {"status": "error", "mensaje": f"Fallo al escribir en Google Sheets: {str(e)}"}
+        return {"status": "error", "mensaje": f"Fallo al escribir en Sheets: {str(e)}"}
