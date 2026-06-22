@@ -9,34 +9,34 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from google.oauth2.service_account import Credentials
+from bs4 import BeautifulSoup
 
-# 1. INICIALIZACIÓN DE LA APLICACIÓN
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# CONFIGURACIÓN DE SEGURIDAD
 CLAVE_SECRETA = "Prefectura2026"  
 COOKIE_NAME = "sesion_prefecto"
 
-# CONFIGURACIÓN DE LA API DE WHATSAPP
 WHATSAPP_API_URL = "http://tu-servicio-whatsapp-interno.railway.internal/send-message"
 WHATSAPP_TOKEN = "UnTokenSeguroCreadoPorTi"
 
-# --- VARIABLES GLOBALES DE CACHÉ ---
 CACHE_TUTORES = {}
 
-# MODELOS DE DATOS (PYDANTIC) - Se agrega url_credencial para el registro
 class EntradaQR(BaseModel):
     texto_qr: str
 
 class NuevoAlumno(BaseModel):
     key_qr: str
+    url_credencial: str
     num_control: str
     alumno: str
     telefono_tutor: str
-    url_credencial: str
+    curp: str = ""
+    especialidad: str = ""
+    semestre: str = ""
+    plantel: str = ""
+    imss: str = ""
 
-# Conexión Segura con Google Sheets
 def conectar_sheets():
     creds_json = os.environ.get("GOOGLE_CREDS")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -53,7 +53,6 @@ def conectar_sheets():
     client = gspread.authorize(creds)
     return client.open_by_url("https://docs.google.com/spreadsheets/d/193NV0p1OQsZAZy-f-gtOQZE743lh6yC6GgtlYzTHTkY/edit?usp=sharing")
 
-# Sincronización en memoria RAM
 def actualizar_cache_tutores():
     global CACHE_TUTORES
     try:
@@ -71,26 +70,57 @@ def actualizar_cache_tutores():
                     "status": fila[3]
                 }
         CACHE_TUTORES = nueva_cache
-        print("⚡ [CACHÉ] Base de datos sincronizada en memoria con éxito.")
+        print("⚡ [CACHÉ] Base de datos sincronizada exitosamente.")
     except Exception as e:
-        print(f"❌ Error crítico al inicializar la caché: {str(e)}")
+        print(f"❌ Error al inicializar la caché: {str(e)}")
 
 @app.on_event("startup")
 async def startup_event():
     actualizar_cache_tutores()
 
+def extraer_datos_cecytec(url: str):
+    """
+    Visita silenciosamente la URL de CECYTEC y hace scraping de los campos de texto
+    basado en las etiquetas de la estructura HTML oficial.
+    """
+    datos = {
+        "num_control": "", "alumno": "", "status": "ACTIVO", 
+        "curp": "", "especialidad": "", "semestre": "", 
+        "plantel": "", "imss": ""
+    }
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
+        response = requests.get(url, headers=headers, timeout=7)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            texto_pagina = soup.get_text()
+
+            # Mapeo por expresiones regulares buscando los patrones visuales de la tarjeta
+            patrones = {
+                "alumno": r"NOMBRE DEL ALUMNO:\s*([^\n\r]+)",
+                "num_control": r"NUMERO DE CONTROL:\s*([^\n\r]+)",
+                "curp": r"CURP:\s*([^\n\r]+)",
+                "imss": r"IMSS:\s*([^\n\r]+)",
+                "especialidad": r"ESPECIALIDAD:\s*([^\n\r]+)",
+                "semestre": r"SEMESTRE ACTUAL:\s*([^\n\r]+)",
+                "plantel": r"NOMBRE DEL PLANTEL:\s*([^\n\r]+)",
+                "status": r"STATUS:\s*([^\n\r]+)"
+            }
+            
+            for clave, patron in patrones.items():
+                match = re.search(patron, texto_pagina, re.IGNORECASE)
+                if match:
+                    datos[clave] = match.group(1).strip()
+    except Exception as scrape_err:
+        print(f"⚠️ Alerta durante Scraping: {str(scrape_err)}")
+    return datos
+
 def enviar_mensaje_whatsapp(telefono_tutor, mensaje):
     if not str(telefono_tutor).startswith("52"):
         telefono_tutor = f"52{telefono_tutor}"
         
-    payload = {
-        "chatId": f"{telefono_tutor}@c.us",
-        "text": mensaje
-    }
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    payload = {"chatId": f"{telefono_tutor}@c.us", "text": mensaje}
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     try:
         requests.post(WHATSAPP_API_URL, json=payload, headers=headers, timeout=5)
     except Exception as e:
@@ -100,7 +130,6 @@ def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fe
     try:
         doc = conectar_sheets()
         pestaña_asistencia = doc.worksheet("Asistencia_Diaria")
-        
         registros_hoy = pestaña_asistencia.get_all_values()
         tipo_evento = "ENTRADA"
         
@@ -110,26 +139,19 @@ def procesar_asistencia_en_segundo_plano(num_control, alumno, telefono_tutor, fe
                     tipo_evento = "SALIDA"
 
         pestaña_asistencia.append_row([
-            f"{fecha_registro} {hora_registro}", 
-            num_control, 
-            alumno, 
-            tipo_evento, 
-            "Permitido"
+            f"{fecha_registro} {hora_registro}", num_control, alumno, tipo_evento, "Permitido"
         ])
         
         if telefono_tutor and str(telefono_tutor).strip():
             saludo = "Buenos días" if "AM" in hora_registro else "Buenas tardes"
             mensaje_wa = f"📝 *CECYTEC Informa:*\n\n{saludo}, le notificamos que el alumno(a) *{alumno}* ha registrado su *{tipo_evento}* del plantel el día de hoy a las {hora_registro}."
             enviar_mensaje_whatsapp(telefono_tutor, mensaje_wa)
-            
-        print(f"✅ Asistencia registrada de fondo para {alumno} ({tipo_evento})")
     except Exception as e:
-        print(f"❌ Error en tarea asíncrona de Sheets/WhatsApp: {str(e)}")
+        print(f"❌ Error en tarea asíncrona: {str(e)}")
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    sesion = request.cookies.get(COOKIE_NAME)
-    if sesion == CLAVE_SECRETA:
+    if request.cookies.get(COOKIE_NAME) == CLAVE_SECRETA:
         return templates.TemplateResponse("index.html", {"request": request})
     
     html_login = """
@@ -152,7 +174,7 @@ async def home(request: Request):
     <body>
         <div class="card">
             <h2>⚠️ Control de Acceso</h2>
-            <p>Esta página es de uso exclusivo para el personal autorizado en la puerta del plantel.</p>
+            <p>Uso exclusivo para personal autorizado en la puerta del plantel.</p>
             <form method="post" action="/login">
                 <input type="password" name="clave" placeholder="Contraseña de Prefectura" required>
                 <button type="submit">Iniciar Escáner</button>
@@ -174,22 +196,27 @@ async def login(clave: str = Form(...)):
 @app.post("/registrar-asistencia")
 async def registrar_asistencia(data: EntradaQR, request: Request, background_tasks: BackgroundTasks):
     if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
-        return {"status": "error", "mensaje": "No autorizado para registrar asistencia."}
+        return {"status": "error", "mensaje": "No autorizado."}
 
     texto = data.texto_qr
     key_match = re.search(r"[?&]key=([^&]+)", texto)
     
     if not key_match:
-        return {"status": "error", "mensaje": "Código QR no válido. No contiene un formato oficial de credencial CECYTEC."}
+        return {"status": "error", "mensaje": "Código QR no válido. Formato no oficial."}
     
     key_alumno = key_match.group(1).strip()
     
     if key_alumno not in CACHE_TUTORES:
+        # ¡NUEVO!: Intentamos el scraping en vivo antes de mandar el modal
+        print(f"🔍 Buscando datos en portal institucional para Key: {key_alumno}")
+        datos_extraidos = extraer_datos_cecytec(texto)
+        
         return {
             "status": "nuevo_registro", 
             "key_qr": key_alumno,
-            "url_completa": texto, # Enviamos la URL original de vuelta al frontend para el guardado
-            "mensaje": "Nueva credencial detectada. Abriendo formulario de alta..."
+            "url_completa": texto,
+            "datos_scraped": datos_extraidos, # Retorna todo prellenado desde la web
+            "mensaje": "Nueva credencial detectada."
         }
     
     datos_alumno = CACHE_TUTORES[key_alumno]
@@ -199,10 +226,7 @@ async def registrar_asistencia(data: EntradaQR, request: Request, background_tas
     status = datos_alumno["status"]
     
     if "BAJA" in status.upper() or "NO VIGENTE" in status.upper():
-        return {
-            "status": "alerta",
-            "mensaje": f"ACCESO DENEGADO: El alumno {alumno} tiene estatus de {status.upper()}."
-        }
+        return {"status": "alerta", "mensaje": f"ACCESO DENEGADO: {alumno} está de {status.upper()}."}
     
     ahora = datetime.now()
     fecha_registro = ahora.strftime("%Y-%m-%d")
@@ -212,32 +236,33 @@ async def registrar_asistencia(data: EntradaQR, request: Request, background_tas
         procesar_asistencia_en_segundo_plano,
         num_control, alumno, telefono_tutor, fecha_registro, hora_registro
     )
-    
-    return {
-        "status": "exito",
-        "mensaje": f"Procesando acceso para: {alumno}. ¡Siguiente!"
-    }
+    return {"status": "exito", "mensaje": f"Procesando acceso para: {alumno}."}
 
 @app.post("/dar-de-alta")
 async def dar_de_alta(alumno_data: NuevoAlumno, request: Request):
     if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
-        return {"status": "error", "mensaje": "No autorizado para realizar esta acción."}
+        return {"status": "error", "mensaje": "No autorizado."}
     
     try:
         doc = conectar_sheets()
         pestaña_tutores = doc.worksheet("Directorio_Tutores")
         
-        # Guardamos en orden estricto: A:Num, B:Nombre, C:Tel, D:Status, E:Key_QR, F:URL_Completa
+        # Insertamos las 11 columnas completas en Google Sheets
         pestaña_tutores.append_row([
             alumno_data.num_control.strip(),
             alumno_data.alumno.strip().upper(),
             alumno_data.telefono_tutor.strip(),
             "ACTIVO",
             alumno_data.key_qr.strip(),
-            alumno_data.url_credencial.strip() # <--- NUEVA COLUMNA F EN GOOGLE SHEETS
+            alumno_data.url_credencial.strip(),
+            alumno_data.curp.strip().upper(),
+            alumno_data.especialidad.strip().upper(),
+            alumno_data.semestre.strip().upper(),
+            alumno_data.plantel.strip().upper(),
+            alumno_data.imss.strip()
         ])
         
         actualizar_cache_tutores()
-        return {"status": "exito", "mensaje": f"El alumno {alumno_data.alumno} fue registrado con éxito y su URL fue respaldada."}
+        return {"status": "exito", "mensaje": f"Perfil completo de {alumno_data.alumno} almacenado."}
     except Exception as e:
         return {"status": "error", "mensaje": f"Fallo al escribir en Sheets: {str(e)}"}
