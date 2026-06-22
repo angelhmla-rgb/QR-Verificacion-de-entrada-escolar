@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Control de Acceso - CECYTEC</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" integrity="sha512-r6rDA7W6ZeQhvl8S7nEBzR7sUtSA9ghx4TgAVwpPq6cErmvEWmW9HBq7PR4fWkEDDHU4jM1EqWrcKraMv5shlg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="/static/html5-qrcode.min.js" type="text/javascript"></script>
     <style>
         :root {
             --primary: #00875a;
@@ -215,22 +215,16 @@
         let escanerBloqueado = false;
 
         function inicializarEscaner() {
-            // Aseguramos que la librería exista antes de renderizar para prevenir bloqueos
-            if (typeof Html5QrcodeScanner !== "undefined") {
-                html5QrcodeScanner = new Html5QrcodeScanner(
-                    "reader", 
-                    { 
-                        fps: 15, 
-                        qrbox: { width: 250, height: 250 },
-                        rememberLastUsedCamera: true,
-                        supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
-                    }
-                );
-                html5QrcodeScanner.render(onScanSuccess, onScanFailure);
-            } else {
-                console.error("La librería del escáner no cargó correctamente.");
-                actualizarInterfaz("⚠️ Error de Inicialización", "Recargue la página para intentar reconectar.", "error");
-            }
+            html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader", 
+                { 
+                    fps: 15, 
+                    qrbox: { width: 250, height: 250 },
+                    rememberLastUsedCamera: true,
+                    supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+                }
+            );
+            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
         }
 
         async function onScanSuccess(decodedText, decodedResult) {
@@ -273,9 +267,7 @@
             }
         }
 
-        function onScanFailure(error) {
-            // Rastreo silencioso de frames
-        }
+        function onScanFailure(error) {}
 
         function actualizarInterfaz(titulo, descripcion, clase) {
             const card = document.getElementById("status-card");
@@ -378,7 +370,6 @@
             }
         }
 
-        // Evento seguro: inicializa únicamente cuando toda la estructura HTML ha sido dibujada
         document.addEventListener("DOMContentLoaded", inicializarEscaner);
     </script>
 </body>
