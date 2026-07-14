@@ -237,7 +237,7 @@ async def registrar_asistencia(data: EntradaQR, request: Request, background_tas
         return {"status": "alerta", "mensaje": f"ACCESO DENEGADO: {alumno} está de {status.upper()}."}
     
     ahora = datetime.now()
-    fecha_registro =強 ahora.strftime("%Y-%m-%d")
+    fecha_registro = ahora.strftime("%Y-%m-%d")
     hora_registro = ahora.strftime("%I:%M %p")
 
     background_tasks.add_task(
