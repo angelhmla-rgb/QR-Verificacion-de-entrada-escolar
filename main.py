@@ -1,188 +1,385 @@
-import re
-import json
-import os
-import gspread
-import requests
-from datetime import datetime
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
-from google.oauth2.service_account import Credentials
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control de Acceso - CECYTEC</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" integrity="sha512-r6rDA7W6ZeQhvl8S7nEBzR7sUtSA9ghx4TgAVwpPq6cErmvEWmW9HBq7PR4fWkEDDHU4jM1EqWrcKraMv5shlg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <style>
+        :root {
+            --primary: #00875a;
+            --primary-dark: #006c48;
+            --secondary: #2c3e50;
+            --danger: #d32f2f;
+            --warning: #f57c00;
+            --bg: #f4f6f9;
+        }
 
-# 1. INICIALIZACIÓN DE LA APLICACIÓN
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            padding: 0;
+            color: var(--secondary);
+        }
 
-# CONFIGURACIÓN DE SEGURIDAD
-CLAVE_SECRETA = "Prefectura2026"  
-COOKIE_NAME = "sesion_prefecto"
+        header {
+            background-color: var(--secondary);
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
 
-# CONFIGURACIÓN DE LA API DE WHATSAPP
-WHATSAPP_API_URL = "http://tu-servicio-whatsapp-interno.railway.internal/send-message"
-WHATSAPP_TOKEN = "UnTokenSeguroCreadoPorTi"
+        .container {
+            max-width: 500px;
+            margin: 20px auto;
+            padding: 10px;
+            box-sizing: border-box;
+        }
 
-class EntradaQR(BaseModel):
-    texto_qr: str
+        #reader {
+            width: 100%;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            border: none !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
 
-# Conexión Segura con Google Sheets
-def conectar_sheets():
-    creds_json = os.environ.get("GOOGLE_CREDS")
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    
-    if creds_json:
-        try:
-            info = json.loads(creds_json)
-            creds = Credentials.from_service_account_info(info, scopes=scope)
-        except Exception as json_err:
-            raise RuntimeError(f"Error al procesar el formato JSON de GOOGLE_CREDS: {str(json_err)}")
-    else:
-        creds = Credentials.from_service_account_file("cecytec-acceso-170202a5fd9f.json", scopes=scope)
-        
-    client = gspread.authorize(creds)
-    return client.open_by_url("https://docs.google.com/spreadsheets/d/193NV0p1OQsZAZy-f-gtOQZE743lh6yC6GgtlYzTHTkY/edit?usp=sharing")
+        #status-card {
+            background: white;
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            text-align: center;
+            transition: all 0.3s ease;
+        }
 
-# Función para enviar las notificaciones a los tutores
-def enviar_mensaje_whatsapp(telefono_tutor, mensaje):
-    if not str(telefono_tutor).startswith("52"):
-        telefono_tutor = f"52{telefono_tutor}"
-        
-    payload = {
-        "chatId": f"{telefono_tutor}@c.us",
-        "text": mensaje
-    }
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    try:
-        response = requests.post(WHATSAPP_API_URL, json=payload, headers=headers, timeout=5)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"❌ Fallo de conexión con WhatsApp: {str(e)}")
-        return False
+        .status-idle { border-left: 6px solid #ccc; }
+        .status-success { border-left: 6px solid var(--primary); background-color: #ebf7f2; }
+        .status-error { border-left: 6px solid var(--danger); background-color: #fdf2f2; }
+        .status-warning { border-left: 6px solid var(--warning); background-color: #fffaf4; }
 
-# Pantalla de inicio de sesión / Filtro de seguridad
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    sesion = request.cookies.get(COOKIE_NAME)
-    if sesion == CLAVE_SECRETA:
-        return templates.TemplateResponse("index.html", {"request": request})
-    
-    html_login = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Acceso Restringido - CECYTEC</title>
-        <style>
-            body { font-family: sans-serif; background: #f4f6f9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-            .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; max-width: 360px; width: 90%; }
-            h2 { color: #2c3e50; margin-bottom: 10px; }
-            p { color: #7f8c8d; font-size: 14px; margin-bottom: 20px; }
-            input[type="password"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-            button { width: 100%; padding: 12px; background: #00875a; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
-            button:hover { background: #006c48; }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h2>⚠️ Control de Acceso</h2>
-            <p>Esta página es de uso exclusivo para el personal autorizado en la puerta del plantel.</p>
-            <form method="post" action="/login">
-                <input type="password" name="clave" placeholder="Contraseña de Prefectura" required>
-                <button type="submit">Iniciar Escáner</button>
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            overflow-y: auto;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 450px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-content h3 {
+            margin-top: 0;
+            color: var(--secondary);
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: bold;
+            margin-bottom: 4px;
+            color: #555;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+
+        .form-group input:focus {
+            border-color: var(--primary);
+            outline: none;
+        }
+
+        .btn-submit {
+            width: 100%;
+            padding: 12px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .btn-submit:hover { background: var(--primary-dark); }
+        .btn-close {
+            width: 100%;
+            padding: 10px;
+            background: #e0e0e0;
+            color: #333;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>🛡️ CECYTEC — Control de Prefectura</header>
+
+    <div class="container">
+        <div id="reader"></div>
+
+        <div id="status-card" class="status-idle">
+            <h3 id="status-title" style="margin:0 0 5px 0;">Listo para escanear</h3>
+            <p id="status-desc" style="margin:0; color:#666; font-size:14px;">Coloque el código QR de la credencial frente a la cámara.</p>
+        </div>
+    </div>
+
+    <div id="registroModal" class="modal">
+        <div class="modal-content">
+            <h3>📝 Registro de Alumno Nuevo</h3>
+            <p style="font-size: 13px; color: #666; margin-top: -10px; margin-bottom: 15px;">
+                Se han recuperado datos automáticamente del portal institucional. Por favor, añada el teléfono del tutor.
+            </p>
+            <form id="formAlta" onsubmit="guardarNuevoAlumno(event)">
+                <input type="hidden" id="modalKeyQr">
+                <input type="hidden" id="modalUrlCredencial">
+
+                <div class="form-group">
+                    <label>Número de Control:</label>
+                    <input type="text" id="modalNumControl" required readonly style="background: #f0f0f0;">
+                </div>
+                <div class="form-group">
+                    <label>Nombre del Alumno:</label>
+                    <input type="text" id="modalAlumno" required readonly style="background: #f0f0f0;">
+                </div>
+                <div class="form-group">
+                    <label>CURP:</label>
+                    <input type="text" id="modalCurp" readonly style="background: #f0f0f0;">
+                </div>
+                <div class="form-group">
+                    <label>Especialidad / Carrera:</label>
+                    <input type="text" id="modalEspecialidad" readonly style="background: #f0f0f0;">
+                </div>
+                <div class="form-group">
+                    <label>Semestre Actual:</label>
+                    <input type="text" id="modalSemestre" readonly style="background: #f0f0f0;">
+                </div>
+                <div class="form-group">
+                    <label>Plantel:</label>
+                    <input type="text" id="modalPlantel" readonly style="background: #f0f0f0;">
+                </div>
+                <div class="form-group">
+                    <label>Número de Seguridad Social (IMSS):</label>
+                    <input type="text" id="modalImss" readonly style="background: #f0f0f0;">
+                </div>
+                <div class="form-group" style="margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 10px;">
+                    <label style="color: var(--warning); font-size: 14px;">📞 Teléfono del Tutor (10 dígitos):</label>
+                    <input type="tel" id="modalTelefono" placeholder="Ej: 8781234567" required pattern="[0-9]{10}" title="Deben ser exactamente 10 dígitos numéricos">
+                </div>
+
+                <button type="submit" class="btn-submit">Guardar Registro en Sheets</button>
+                <button type="button" class="btn-close" onclick="cerrarModal()">Cancelar</button>
             </form>
         </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_login)
+    </div>
 
-# Procesar la contraseña ingresada
-@app.post("/login")
-async def login(clave: str = Form(...)):
-    if clave == CLAVE_SECRETA:
-        response = RedirectResponse(url="/", status_code=303)
-        response.set_cookie(key=COOKIE_NAME, value=CLAVE_SECRETA, max_age=28800)
-        return response
-    return HTMLResponse(content="<script>alert('Contraseña Incorrecta'); window.location='/';</script>")
+    <script>
+        let html5QrcodeScanner;
+        let escanerBloqueado = false;
 
-# Procesador de códigos QR con Extracción de KEY Automática para Nuevos Alumnos
-@app.post("/registrar-asistencia")
-async def registrar_asistencia(data: EntradaQR, request: Request):
-    if request.cookies.get(COOKIE_NAME) != CLAVE_SECRETA:
-        return {"status": "error", "mensaje": "No autorizado para registrar asistencia."}
-
-    texto = data.texto_qr
-    
-    # Extraemos el parámetro 'key=' que viene dentro de la URL del QR
-    key_match = re.search(r"[?&]key=([^&]+)", texto)
-    
-    if not key_match:
-        return {"status": "error", "mensaje": "Código QR no válido. No contiene un formato oficial de credencial CECYTEC."}
-    
-    key_alumno = key_match.group(1).strip()
-    
-    try:
-        doc = conectar_sheets()
-        pestaña_tutores = doc.worksheet("Directorio_Tutores")
-        pestaña_asistencia = doc.worksheet("Asistencia_Diaria")
-        
-        celda_alumno = pestaña_tutores.find(key_alumno)
-        
-        # MODIFICACIÓN CLAVE: Si la credencial NO existe, te muestra la Key limpia lista para copiar
-        if not celda_alumno:
-            return {
-                "status": "error", 
-                "mensaje": f"Nueva credencial detectada. Copia esta clave para tu Google Sheets:\n\n🔑 {key_alumno}"
+        function inicializarEscaner() {
+            // Aseguramos que la librería exista antes de renderizar para prevenir bloqueos
+            if (typeof Html5QrcodeScanner !== "undefined") {
+                html5QrcodeScanner = new Html5QrcodeScanner(
+                    "reader", 
+                    { 
+                        fps: 15, 
+                        qrbox: { width: 250, height: 250 },
+                        rememberLastUsedCamera: true,
+                        supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+                    }
+                );
+                html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+            } else {
+                console.error("La librería del escáner no cargó correctamente.");
+                actualizarInterfaz("⚠️ Error de Inicialización", "Recargue la página para intentar reconectar.", "error");
             }
-        
-        fila_alumno = celda_alumno.row
-        datos_alumno = pestaña_tutores.row_values(fila_alumno)
-        
-        num_control = datos_alumno[0]
-        alumno = datos_alumno[1]
-        telefono_tutor = datos_alumno[2] if len(datos_alumno) >= 3 else None
-        status = datos_alumno[3] if len(datos_alumno) >= 4 else "ACTIVO"
-        
-        if "BAJA" in status.upper() or "NO VIGENTE" in status.upper():
-            return {
-                "status": "alerta",
-                "mensaje": f"ACCESO DENEGADO: El alumno {alumno} tiene estatus de {status.upper()}."
-            }
-        
-        ahora = datetime.now()
-        fecha_registro = ahora.strftime("%Y-%m-%d")
-        hora_registro = ahora.strftime("%I:%M %p")
-        
-        registros_hoy = pestaña_asistencia.get_all_values()
-        tipo_evento = "ENTRADA"
-        
-        for fila in registros_hoy:
-            if len(fila) >= 4 and fila[0].startswith(fecha_registro) and fila[1] == num_control:
-                if fila[3] == "ENTRADA":
-                    tipo_evento = "SALIDA"
-
-        pestaña_asistencia.append_row([
-            f"{fecha_registro} {hora_registro}", 
-            num_control, 
-            alumno, 
-            tipo_evento, 
-            "Permitido"
-        ])
-        
-        if telefono_tutor and str(telefono_tutor).strip():
-            saludo = "Buenos días" if "AM" in hora_registro else "Buenas tardes"
-            mensaje_wa = f"📝 *CECYTEC Informa:*\n\n{saludo}, le notificamos que el alumno(a) *{alumno}* ha registrado su *{tipo_evento}* del plantel el día de hoy a las {hora_registro}."
-            
-            enviar_mensaje_whatsapp(telefono_tutor, mensaje_wa)
-        
-        return {
-            "status": "exito",
-            "mensaje": f"Acceso Registrado ({tipo_evento}): {alumno} a las {hora_registro}."
         }
-        
-    except Exception as e:
-        return {"status": "error", "mensaje": f"Error al conectar con Google Sheets: {str(e)}"}
+
+        async function onScanSuccess(decodedText, decodedResult) {
+            if (escanerBloqueado) return;
+            
+            escanerBloqueado = true;
+            actualizarInterfaz("Ejecutando...", "Verificando código en el sistema...", "warning");
+
+            try {
+                const response = await fetch('/registrar-asistencia', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ texto_qr: decodedText })
+                });
+                
+                const resultado = await response.json();
+
+                if (resultado.status === "exito") {
+                    actualizarInterfaz("✅ Acceso Registrado", resultado.mensaje, "success");
+                    reproducirSonido(true);
+                    setTimeout(() => { resetearInterfaz(); }, 3000);
+
+                } else if (resultado.status === "alerta") {
+                    actualizarInterfaz("🛑 Acceso Denegado", resultado.mensaje, "error");
+                    reproducirSonido(false);
+                    setTimeout(() => { resetearInterfaz(); }, 5000);
+
+                } else if (resultado.status === "nuevo_registro") {
+                    actualizarInterfaz("🔍 Nueva Credencial", "Abriendo formulario de alta...", "warning");
+                    abrirModalAlta(resultado);
+
+                } else {
+                    actualizarInterfaz("⚠️ Error", resultado.mensaje, "error");
+                    setTimeout(() => { resetearInterfaz(); }, 4000);
+                }
+
+            } catch (error) {
+                actualizarInterfaz("❌ Error de Conexión", "No se pudo comunicar con el servidor local.", "error");
+                setTimeout(() => { resetearInterfaz(); }, 4000);
+            }
+        }
+
+        function onScanFailure(error) {
+            // Rastreo silencioso de frames
+        }
+
+        function actualizarInterfaz(titulo, descripcion, clase) {
+            const card = document.getElementById("status-card");
+            const titleElem = document.getElementById("status-title");
+            const descElem = document.getElementById("status-desc");
+
+            if(card && titleElem && descElem) {
+                card.className = ""; 
+                card.classList.add(`status-${clase}`);
+                titleElem.innerText = titulo;
+                descElem.innerText = descripcion;
+            }
+        }
+
+        function resetearInterfaz() {
+            actualizarInterfaz("Listo para escanear", "Coloque el código QR de la credencial frente a la cámara.", "idle");
+            escanerBloqueado = false;
+        }
+
+        function abrirModalAlta(datosPeticion) {
+            document.getElementById("modalKeyQr").value = datosPeticion.key_qr;
+            document.getElementById("modalUrlCredencial").value = datosPeticion.url_completa;
+            
+            const scraped = datosPeticion.datos_scraped;
+            document.getElementById("modalNumControl").value = scraped.num_control || "";
+            document.getElementById("modalAlumno").value = scraped.alumno || "";
+            document.getElementById("modalCurp").value = scraped.curp || "";
+            document.getElementById("modalEspecialidad").value = scraped.especialidad || "";
+            document.getElementById("modalSemestre").value = scraped.semestre || "";
+            document.getElementById("modalPlantel").value = scraped.plantel || "";
+            document.getElementById("modalImss").value = scraped.imss || "";
+            
+            document.getElementById("modalTelefono").value = "";
+            document.getElementById("registroModal").style.display = "flex";
+        }
+
+        function cerrarModal() {
+            document.getElementById("registroModal").style.display = "none";
+            resetearInterfaz();
+        }
+
+        async function guardarNuevoAlumno(event) {
+            event.preventDefault();
+
+            const payload = {
+                key_qr: document.getElementById("modalKeyQr").value,
+                url_credencial: document.getElementById("modalUrlCredencial").value,
+                num_control: document.getElementById("modalNumControl").value,
+                alumno: document.getElementById("modalAlumno").value,
+                telefono_tutor: document.getElementById("modalTelefono").value,
+                curp: document.getElementById("modalCurp").value,
+                especialidad: document.getElementById("modalEspecialidad").value,
+                semestre: document.getElementById("modalSemestre").value,
+                plantel: document.getElementById("modalPlantel").value,
+                imss: document.getElementById("modalImss").value
+            };
+
+            try {
+                const response = await fetch('/dar-de-alta', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const res = await response.json();
+                if (res.status === "exito") {
+                    alert("¡Alumno guardado con éxito! Ya puede pasar su credencial nuevamente para registrar asistencia.");
+                    cerrarModal();
+                } else {
+                    alert("Error: " + res.mensaje);
+                }
+            } catch (err) {
+                alert("Fallo de red al intentar conectar con el servidor.");
+            }
+        }
+
+        function reproducirSonido(esExito) {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                if (esExito) {
+                    osc.frequency.setValueAtTime(880, ctx.currentTime); 
+                    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.15);
+                } else {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(220, ctx.currentTime); 
+                    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.4);
+                }
+            } catch (e) {
+                console.log("AudioContext requiere interacción previa.");
+            }
+        }
+
+        // Evento seguro: inicializa únicamente cuando toda la estructura HTML ha sido dibujada
+        document.addEventListener("DOMContentLoaded", inicializarEscaner);
+    </script>
+</body>
+</html>
